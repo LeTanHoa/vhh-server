@@ -121,7 +121,13 @@ mongoose.connection.on('reconnected', () => {
   console.log('✅  MongoDB đã kết nối lại.');
 });
 
-// ==========================================
+// Serverless auto-reconnect middleware: ensure DB connection on incoming requests
+app.use(async (req, res, next) => {
+  if (!isDbConnected && mongoUri) {
+    await connectToMongo();
+  }
+  next();
+});
 // API ROUTES
 // ==========================================
 
