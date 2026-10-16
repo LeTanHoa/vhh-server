@@ -39,6 +39,12 @@ const productSchema = new mongoose.Schema({
     unique: true,
     trim: true
   },
+  slug: {
+    type: String,
+    trim: true,
+    lowercase: true,
+    index: true
+  },
   image: {
     type: String,
     default: '/assets/keo_dua_ngoc_hai_spec.png'

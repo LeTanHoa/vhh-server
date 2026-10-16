@@ -65,6 +65,20 @@ let dbConnectionError = null;
 const rawUri = process.env.MONGODB_URI || process.env.MONGO_URI || '';
 const mongoUri = rawUri.trim().replace(/^['"]|['"]$/g, '');
 
+export function slugify(text) {
+  if (!text) return '';
+  return text
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .replace(/[^a-z0-9 -]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
 // MongoDB Connection Logic
 async function connectToMongo() {
   if (!mongoUri) {
@@ -106,6 +120,14 @@ async function connectToMongo() {
       if (!ngocHaiExists) {
         console.log('🥥 Tự động nạp thêm Kẹo dừa dẻo Ngọc Hải vào MongoDB...');
         await Product.create(defaultSeedProducts[0]);
+      }
+      // Tự động bổ sung slug cho những sản phẩm chưa có slug
+      const prodsWithoutSlug = await Product.find({
+        $or: [{ slug: { $exists: false } }, { slug: '' }, { slug: null }]
+      });
+      for (const p of prodsWithoutSlug) {
+        p.slug = slugify(p.name);
+        await p.save();
       }
     }
   } catch (err) {
@@ -286,24 +308,40 @@ app.get('/api/products', async (req, res) => {
   }
 });
 
-// 5. GET single product by ID or verificationCode
+// 5. GET single product by ID, slug, or verificationCode
 app.get('/api/products/:id', async (req, res) => {
   const { id } = req.params;
+  const decodedId = decodeURIComponent(id).trim();
+  const lowerId = decodedId.toLowerCase();
+
   try {
     if (isDbConnected) {
       let product = null;
-      if (mongoose.isValidObjectId(id)) {
-        product = await Product.findById(id);
+      if (mongoose.isValidObjectId(decodedId)) {
+        product = await Product.findById(decodedId);
       }
       if (!product) {
-        product = await Product.findOne({ verificationCode: id });
+        product = await Product.findOne({ slug: lowerId });
+      }
+      if (!product) {
+        product = await Product.findOne({ verificationCode: decodedId });
+      }
+      if (!product) {
+        // Fallback: match by dynamically slugified name
+        const allProds = await Product.find();
+        product = allProds.find(p => (p.slug || slugify(p.name)) === lowerId);
       }
       if (!product) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sản phẩm' });
       }
       return res.json({ success: true, data: product, source: 'mongodb' });
     } else {
-      const product = inMemoryProducts.find(p => p._id === id || p.verificationCode === id);
+      const product = inMemoryProducts.find(p => 
+        p._id === decodedId || 
+        p.verificationCode === decodedId ||
+        (p.slug && p.slug === lowerId) ||
+        slugify(p.name) === lowerId
+      );
       if (!product) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sản phẩm' });
       }
@@ -325,6 +363,11 @@ app.post('/api/products', async (req, res) => {
     if (!payload.verificationCode) {
       payload.verificationCode = 'VCHECK-' + Date.now().toString(36).toUpperCase();
     }
+    if (!payload.slug || !payload.slug.trim()) {
+      payload.slug = slugify(payload.name);
+    } else {
+      payload.slug = slugify(payload.slug);
+    }
     if (Array.isArray(payload.standards)) {
       payload.standards = payload.standards.filter(s => s && (s.label?.trim() || s.value?.trim()));
     }
@@ -334,6 +377,15 @@ app.post('/api/products', async (req, res) => {
       if (existing) {
         return res.status(400).json({ success: false, message: 'Mã xác thực/VCheck này đã tồn tại!' });
       }
+      // Ensure unique slug
+      let uniqueSlug = payload.slug;
+      let counter = 1;
+      while (await Product.findOne({ slug: uniqueSlug })) {
+        uniqueSlug = `${payload.slug}-${counter}`;
+        counter++;
+      }
+      payload.slug = uniqueSlug;
+
       const newProduct = new Product(payload);
       await newProduct.save();
       return res.status(201).json({ success: true, data: newProduct, message: 'Tạo sản phẩm thành công!' });
@@ -361,23 +413,40 @@ app.post('/api/products', async (req, res) => {
 app.put('/api/products/:id', async (req, res) => {
   const { id } = req.params;
   const updates = req.body;
+  const decodedId = decodeURIComponent(id).trim();
+
+  if (updates.slug) {
+    updates.slug = slugify(updates.slug);
+  } else if (updates.name && (!updates.slug || !updates.slug.trim())) {
+    updates.slug = slugify(updates.name);
+  }
+
   if (Array.isArray(updates.standards)) {
     updates.standards = updates.standards.filter(s => s && (s.label?.trim() || s.value?.trim()));
   }
   try {
     if (isDbConnected) {
       let updatedProduct = null;
-      if (mongoose.isValidObjectId(id)) {
-        updatedProduct = await Product.findByIdAndUpdate(id, updates, { new: true, runValidators: true });
-      } else {
-        updatedProduct = await Product.findOneAndUpdate({ verificationCode: id }, updates, { new: true });
+      if (mongoose.isValidObjectId(decodedId)) {
+        updatedProduct = await Product.findByIdAndUpdate(decodedId, updates, { new: true, runValidators: true });
+      }
+      if (!updatedProduct) {
+        updatedProduct = await Product.findOneAndUpdate({ slug: decodedId.toLowerCase() }, updates, { new: true });
+      }
+      if (!updatedProduct) {
+        updatedProduct = await Product.findOneAndUpdate({ verificationCode: decodedId }, updates, { new: true });
       }
       if (!updatedProduct) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sản phẩm để cập nhật' });
       }
       return res.json({ success: true, data: updatedProduct, message: 'Cập nhật sản phẩm thành công!' });
     } else {
-      const index = inMemoryProducts.findIndex(p => p._id === id || p.verificationCode === id);
+      const index = inMemoryProducts.findIndex(p => 
+        p._id === decodedId || 
+        p.verificationCode === decodedId ||
+        p.slug === decodedId.toLowerCase() ||
+        slugify(p.name) === decodedId.toLowerCase()
+      );
       if (index === -1) {
         return res.status(404).json({ success: false, message: 'Không tìm thấy sản phẩm để cập nhật' });
       }
