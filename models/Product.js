@@ -8,6 +8,7 @@ const standardSchema = new mongoose.Schema({
 const manufacturerSchema = new mongoose.Schema({
   name: { type: String, default: '' },
   country: { type: String, default: 'Việt Nam' },
+  attpCode: { type: String, default: '' },
   businessId: { type: String, default: '' },
   address: { type: String, default: '' },
   phone: { type: String, default: '' },
@@ -22,11 +23,11 @@ const productSchema = new mongoose.Schema({
   },
   system: {
     type: String,
-    default: 'CỔNG TRUY XUẤT NGUỒN GỐC VCHECK (vcheck.com.vn)'
+    default: 'CỔNG TRUY XUẤT NGUỒN GỐC DNTRACE (dntrace.com)'
   },
   provider: {
     type: String,
-    default: 'Công ty TNHH MTV Vạn Phúc Hoa'
+    default: 'dntrace.com'
   },
   status: {
     type: String,
@@ -40,36 +41,60 @@ const productSchema = new mongoose.Schema({
   },
   image: {
     type: String,
-    default: '/assets/ngu_coc_huongfarm.jpg'
+    default: '/assets/keo_dua_ngoc_hai_spec.png'
+  },
+  gallery: {
+    type: [String],
+    default: []
   },
   vcheckBanner: {
     type: String,
-    default: '/assets/vcheck_banner.jpg'
+    default: '/assets/dntrace_logo.jpg'
   },
   ingredients: {
+    type: String,
+    default: ''
+  },
+  tcbsp: {
+    type: String,
+    default: ''
+  },
+  standardCode: {
+    type: String,
+    default: ''
+  },
+  warning: {
+    type: String,
+    default: ''
+  },
+  story: {
+    type: String,
+    default: ''
+  },
+  rawMaterials: {
     type: String,
     default: ''
   },
   standards: [standardSchema],
   netWeight: {
     type: String,
-    default: '500g'
+    default: 'đang cập nhật'
   },
   expiry: {
     type: String,
-    default: '12 tháng kể từ ngày sản xuất'
+    default: 'đang cập nhật'
   },
   manufactureDate: {
     type: String,
-    default: 'Xem chi tiết trên bao bì sản phẩm'
+    default: 'Xem trên bao bì'
   },
   usageGuide: {
     type: String,
-    default: ''
+    default: 'xem chi tiết trên bao bì'
   },
   storageGuide: {
     type: String,
-    default: ''
+    default: 'Bảo quản ở nơi khô ráo thoáng mát tránh ánh nắng trực tiếp'
   },
   manufacturer: {
     type: manufacturerSchema,
@@ -94,3 +119,4 @@ const productSchema = new mongoose.Schema({
 const Product = mongoose.models.Product || mongoose.model('Product', productSchema);
 
 export default Product;
+

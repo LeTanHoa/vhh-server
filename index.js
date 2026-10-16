@@ -6,7 +6,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { v2 as cloudinary } from 'cloudinary';
 import Product from './models/Product.js';
+import QrRequest from './models/QrRequest.js';
 import { defaultSeedProducts } from './seedData.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,8 +22,8 @@ const PORT = process.env.PORT || 5001;
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '25mb' }));
-app.use(express.urlencoded({ extended: true, limit: '25mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // ==========================================
 // CLOUDINARY CONFIGURATION
@@ -53,6 +55,9 @@ let inMemoryProducts = JSON.parse(JSON.stringify(defaultSeedProducts)).map((p, i
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
 }));
+
+let inMemoryQrRequests = [];
+
 
 let isDbConnected = false;
 let dbConnectionError = null;
@@ -96,6 +101,12 @@ async function connectToMongo() {
       console.log(`✅ Đã nạp thành công ${defaultSeedProducts.length} sản phẩm mẫu vào MongoDB!`);
     } else {
       console.log(`📦 Tìm thấy ${count} sản phẩm đã có sẵn trong MongoDB.`);
+      // Đảm bảo Kẹo dừa dẻo Ngọc Hải có trong DB
+      const ngocHaiExists = await Product.findOne({ name: /Kẹo dừa dẻo Ngọc Hải/i });
+      if (!ngocHaiExists) {
+        console.log('🥥 Tự động nạp thêm Kẹo dừa dẻo Ngọc Hải vào MongoDB...');
+        await Product.create(defaultSeedProducts[0]);
+      }
     }
   } catch (err) {
     isDbConnected = false;
@@ -176,17 +187,18 @@ app.post('/api/auth/login', (req, res) => {
 // 3. Upload Image to Cloudinary
 app.post('/api/upload', async (req, res) => {
   try {
-    const { image, folder = 'vhh_products' } = req.body;
+    const { image, folder = 'dntrace_products' } = req.body;
     if (!image) {
       return res.status(400).json({ success: false, message: 'Chưa có dữ liệu hình ảnh' });
     }
 
     if (isCloudinaryConfigured) {
-      console.log('☁️ Đang upload ảnh lên Cloudinary...');
+      console.log('☁️ Đang upload 1 ảnh lên Cloudinary...');
       const uploadRes = await cloudinary.uploader.upload(image, {
         folder,
         resource_type: 'auto'
       });
+      console.log('✅ Upload Cloudinary thành công:', uploadRes.secure_url);
       return res.json({
         success: true,
         url: uploadRes.secure_url,
@@ -195,13 +207,12 @@ app.post('/api/upload', async (req, res) => {
         message: 'Đã lưu ảnh thành công lên Cloudinary!'
       });
     } else {
-      // If Cloudinary keys are not yet configured, return image as data URI / URL
       return res.json({
         success: true,
         url: image,
         storage: 'local_base64',
-        warning: 'Chưa điền thông tin CLOUDINARY trong .env. Ảnh đang lưu tạm thời.',
-        message: 'Đã nhận ảnh (Vui lòng điền thông tin Cloudinary vào .env để lưu trên mây).'
+        warning: 'Chưa cấu hình Cloudinary trong .env. Ảnh đang lưu tạm thời.',
+        message: 'Đã nhận ảnh tạm thời.'
       });
     }
   } catch (err) {
@@ -209,6 +220,52 @@ app.post('/api/upload', async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Lỗi tải ảnh lên Cloudinary: ' + err.message,
+      error: err.message
+    });
+  }
+});
+
+// 3b. Upload Multiple Images to Cloudinary (Batch Upload)
+app.post('/api/upload-multiple', async (req, res) => {
+  try {
+    const { images, folder = 'dntrace_products' } = req.body;
+    if (!images || !Array.isArray(images) || images.length === 0) {
+      return res.status(400).json({ success: false, message: 'Danh sách hình ảnh không hợp lệ' });
+    }
+
+    if (isCloudinaryConfigured) {
+      console.log(`☁️ Đang upload ${images.length} ảnh lên Cloudinary...`);
+      const uploadPromises = images.map(img => 
+        cloudinary.uploader.upload(img, {
+          folder,
+          resource_type: 'auto'
+        })
+      );
+      const results = await Promise.all(uploadPromises);
+      const urls = results.map(r => r.secure_url);
+
+      console.log(`✅ Upload thành công ${urls.length} ảnh lên Cloudinary!`);
+      return res.json({
+        success: true,
+        urls,
+        count: urls.length,
+        storage: 'cloudinary',
+        message: `Đã lưu thành công ${urls.length} ảnh lên Cloudinary!`
+      });
+    } else {
+      return res.json({
+        success: true,
+        urls: images,
+        count: images.length,
+        storage: 'local_base64',
+        message: `Đã nhận ${images.length} ảnh (Lưu tạm thời Base64)`
+      });
+    }
+  } catch (err) {
+    console.error('Lỗi upload nhiều ảnh lên Cloudinary:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Lỗi tải danh sách ảnh lên Cloudinary: ' + err.message,
       error: err.message
     });
   }
@@ -392,7 +449,83 @@ app.post('/api/products/seed', async (req, res) => {
   }
 });
 
+// ==========================================
+// 10. QR CODE REGISTRATION ENDPOINTS
+// ==========================================
+app.get('/api/qr-requests', async (req, res) => {
+  try {
+    if (isDbConnected) {
+      const requests = await QrRequest.find().sort({ createdAt: -1 });
+      return res.json({ success: true, count: requests.length, data: requests });
+    } else {
+      return res.json({ success: true, count: inMemoryQrRequests.length, data: inMemoryQrRequests });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Lỗi tải danh sách yêu cầu cấp mã QR', error: err.message });
+  }
+});
+
+app.post('/api/qr-requests', async (req, res) => {
+  try {
+    const payload = req.body;
+    if (!payload.name || !payload.phone || !payload.businessName || !payload.productName) {
+      return res.status(400).json({ success: false, message: 'Vui lòng điền đầy đủ họ tên, tên đơn vị, tên sản phẩm và số điện thoại' });
+    }
+    if (isDbConnected) {
+      const newReq = await QrRequest.create(payload);
+      return res.status(201).json({ success: true, message: 'Gửi yêu cầu đăng ký cấp mã QR thành công!', data: newReq });
+    } else {
+      const newReq = {
+        ...payload,
+        _id: 'qr_' + Date.now(),
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      inMemoryQrRequests.unshift(newReq);
+      return res.status(201).json({ success: true, message: 'Gửi yêu cầu đăng ký cấp mã QR thành công (In-Memory)!', data: newReq });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Lỗi lưu yêu cầu cấp mã QR', error: err.message });
+  }
+});
+
+app.put('/api/qr-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  const { status, note } = req.body;
+  try {
+    if (isDbConnected) {
+      const updated = await QrRequest.findByIdAndUpdate(id, { ...(status ? { status } : {}), ...(note ? { note } : {}) }, { new: true });
+      return res.json({ success: true, message: 'Cập nhật trạng thái thành công!', data: updated });
+    } else {
+      const item = inMemoryQrRequests.find(r => r._id === id);
+      if (item) {
+        if (status) item.status = status;
+        if (note) item.note = note;
+      }
+      return res.json({ success: true, message: 'Cập nhật trạng thái thành công (In-Memory)!', data: item });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Lỗi cập nhật', error: err.message });
+  }
+});
+
+app.delete('/api/qr-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    if (isDbConnected) {
+      await QrRequest.findByIdAndDelete(id);
+      return res.json({ success: true, message: 'Đã xoá yêu cầu thành công!' });
+    } else {
+      inMemoryQrRequests = inMemoryQrRequests.filter(r => r._id !== id);
+      return res.json({ success: true, message: 'Đã xoá yêu cầu (In-Memory)!' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Lỗi xoá yêu cầu', error: err.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại cổng http://localhost:${PORT}`);
   console.log(`📡 API Endpoints sẵn sàng tại http://localhost:${PORT}/api/products`);
 });
+
